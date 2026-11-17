@@ -1,17 +1,18 @@
-//
-//  WaterTrackerApp.swift
-//  WaterTracker Watch App
-//
-//  Created by Dimitre Cavalcante Souza on 27/06/26.
-//
-
 import SwiftUI
+import UserNotifications
 
 @main
-struct WaterTracker_Watch_AppApp: App {
+struct WaterTrackerApp: App {
+    @StateObject private var store = WaterStore.shared
+
+    init() {
+        UNUserNotificationCenter.current().delegate = NotificationHandler.shared
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environmentObject(store)
         }
     }
 }
