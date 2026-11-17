@@ -1,66 +1,46 @@
 import SwiftUI
 import Combine
 import UserNotifications
-import HealthKit
 
-struct DayRecord: Identifiable {
-    let id = UUID()
-    let label: String
-    let ml: Int
-    let isToday: Bool
-}
-
-class WaterStore: ObservableObject {
+/// Estado do app: quanto bebi hoje, a meta e as preferências.
+/// A conta das regras fica em `Hydration`, o Saúde em `HealthKitService` e os lembretes em `ReminderScheduler`.
+final class WaterStore: ObservableObject {
     static let shared = WaterStore()
 
     @Published var totalMl: Int {
         didSet { save(); updateHistory() }
     }
     @Published var goalMl: Int {
-        didSet { UserDefaults.standard.set(goalMl, forKey: "goal_ml") }
+        didSet { defaults.set(goalMl, forKey: "goal_ml") }
     }
     @Published var lastAmountMl: Int {
-        didSet { UserDefaults.standard.set(lastAmountMl, forKey: "last_amount_ml") }
+        didSet { defaults.set(lastAmountMl, forKey: "last_amount_ml") }
     }
     @Published var weightKg: Int {
-        didSet { UserDefaults.standard.set(weightKg, forKey: "weight_kg") }
+        didSet { defaults.set(weightKg, forKey: "weight_kg") }
     }
     @Published var notificationsEnabled: Bool {
         didSet {
-            UserDefaults.standard.set(notificationsEnabled, forKey: "notifications_enabled")
-            notificationsEnabled ? requestAndScheduleNotifications() : cancelNotifications()
+            defaults.set(notificationsEnabled, forKey: "notifications_enabled")
+            if notificationsEnabled { requestAndScheduleNotifications() } else { reminders.cancel() }
         }
     }
     @Published var reminderIntervalHours: Int {
-        didSet { UserDefaults.standard.set(reminderIntervalHours, forKey: "reminder_interval"); rescheduleIfNeeded() }
+        didSet { defaults.set(reminderIntervalHours, forKey: "reminder_interval"); rescheduleIfNeeded() }
     }
     @Published var reminderStartHour: Int {
-        didSet { UserDefaults.standard.set(reminderStartHour, forKey: "reminder_start"); rescheduleIfNeeded() }
+        didSet { defaults.set(reminderStartHour, forKey: "reminder_start"); rescheduleIfNeeded() }
     }
     @Published var reminderEndHour: Int {
-        didSet { UserDefaults.standard.set(reminderEndHour, forKey: "reminder_end"); rescheduleIfNeeded() }
+        didSet { defaults.set(reminderEndHour, forKey: "reminder_end"); rescheduleIfNeeded() }
     }
 
-    static let reminderCategory = "WATER_REMINDER"
-    static let addWaterAction = "ADD_WATER"
+    private let defaults: UserDefaults
+    private let health = HealthKitService()
+    private let reminders = ReminderScheduler()
 
-    private let healthStore = HKHealthStore()
-
-    private static let dateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd"
-        return f
-    }()
-
-    private static let dayFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "EEEEE"
-        f.locale = Locale(identifier: "pt_BR")
-        return f
-    }()
-
-    init() {
-        let defaults = UserDefaults.standard
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         let savedGoal = defaults.integer(forKey: "goal_ml")
         self.goalMl = savedGoal > 0 ? savedGoal : 2000
         let savedAmount = defaults.integer(forKey: "last_amount_ml")
@@ -73,40 +53,45 @@ class WaterStore: ObservableObject {
         self.reminderStartHour = defaults.object(forKey: "reminder_start") as? Int ?? 8
         self.reminderEndHour = defaults.object(forKey: "reminder_end") as? Int ?? 20
 
+        // Virou o dia: o total de ontem vai para o histórico e o de hoje começa do zero.
         let today = Calendar.current.startOfDay(for: Date())
         let lastReset = defaults.object(forKey: "last_reset_date") as? Date ?? Date.distantPast
 
         if today > lastReset {
             let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: today)!
-            let yesterdayKey = Self.dateFormatter.string(from: yesterday)
             let lastTotal = defaults.integer(forKey: "water_ml")
             if lastTotal > 0 {
-                var h = (defaults.dictionary(forKey: "water_history") as? [String: Int]) ?? [:]
-                h[yesterdayKey] = lastTotal
-                defaults.set(h, forKey: "water_history")
+                var history = (defaults.dictionary(forKey: "water_history") as? [String: Int]) ?? [:]
+                history[Hydration.dayKey(for: yesterday)] = lastTotal
+                defaults.set(history, forKey: "water_history")
             }
             defaults.set(0, forKey: "water_ml")
             defaults.set(today, forKey: "last_reset_date")
         }
 
         self.totalMl = defaults.integer(forKey: "water_ml")
-        registerNotificationCategory()
-        requestHealthKitPermission()
+        reminders.registerCategory()
+        Task { await health.requestAuthorization() }
     }
 
-    var progress: Double { min(Double(totalMl) / Double(goalMl), 1.0) }
+    var progress: Double { Hydration.progress(totalMl: totalMl, goalMl: goalMl) }
     var isGoalReached: Bool { totalMl >= goalMl }
+    var suggestedGoalMl: Int { Hydration.suggestedGoalMl(weightKg: weightKg) }
 
-    /// 35 ml por kg, arredondado para múltiplos de 250 ml.
-    var suggestedGoalMl: Int {
-        let rounded = Int((Double(weightKg) * 35 / 250).rounded()) * 250
-        return min(max(rounded, 500), 6000)
+    var last7Days: [DayRecord] {
+        Hydration.last7Days(history: storedHistory, todayMl: totalMl)
     }
+
+    var currentStreak: Int {
+        Hydration.currentStreak(history: storedHistory, todayMl: totalMl, goalMl: goalMl)
+    }
+
+    var weekAverageMl: Int { Hydration.weekAverageMl(of: last7Days) }
 
     func add(ml: Int) {
         lastAmountMl = ml
         totalMl += ml
-        saveToHealthKit(ml: Double(ml))
+        Task { await health.saveWater(ml: ml) }
         WKInterfaceDevice.current().play(isGoalReached ? .success : .click)
     }
 
@@ -115,106 +100,45 @@ class WaterStore: ObservableObject {
         WKInterfaceDevice.current().play(.directionDown)
     }
 
+    // MARK: Persistência
+
     private var storedHistory: [String: Int] {
-        (UserDefaults.standard.dictionary(forKey: "water_history") as? [String: Int]) ?? [:]
+        (defaults.dictionary(forKey: "water_history") as? [String: Int]) ?? [:]
     }
 
     private func updateHistory() {
-        var h = storedHistory
-        h[Self.dateFormatter.string(from: Date())] = totalMl
-        UserDefaults.standard.set(h, forKey: "water_history")
+        var history = storedHistory
+        history[Hydration.dayKey(for: Date())] = totalMl
+        defaults.set(history, forKey: "water_history")
     }
 
-    var last7Days: [DayRecord] {
-        let calendar = Calendar.current
-        let history = storedHistory
-        return (0..<7).reversed().map { daysAgo in
-            let date = calendar.date(byAdding: .day, value: -daysAgo, to: Date())!
-            let key = Self.dateFormatter.string(from: date)
-            let ml = daysAgo == 0 ? totalMl : (history[key] ?? 0)
-            return DayRecord(label: Self.dayFormatter.string(from: date).uppercased(), ml: ml, isToday: daysAgo == 0)
-        }
+    private func save() {
+        defaults.set(totalMl, forKey: "water_ml")
     }
 
-    /// Dias seguidos com a meta batida. Hoje conta se já bateu; senão a sequência de ontem continua viva.
-    var currentStreak: Int {
-        let calendar = Calendar.current
-        let history = storedHistory
-        var count = isGoalReached ? 1 : 0
-        var offset = 1
-        while let date = calendar.date(byAdding: .day, value: -offset, to: Date()),
-              (history[Self.dateFormatter.string(from: date)] ?? 0) >= goalMl {
-            count += 1
-            offset += 1
-        }
-        return count
-    }
+    // MARK: Lembretes
 
-    /// Média dos dias da última semana em que algo foi registrado.
-    var weekAverageMl: Int {
-        let filled = last7Days.map(\.ml).filter { $0 > 0 }
-        return filled.isEmpty ? 0 : filled.reduce(0, +) / filled.count
-    }
-
-    private func requestHealthKitPermission() {
-        guard HKHealthStore.isHealthDataAvailable() else { return }
-        let waterType = HKQuantityType(.dietaryWater)
-        healthStore.requestAuthorization(toShare: [waterType], read: [waterType]) { _, _ in }
-    }
-
-    private func saveToHealthKit(ml: Double) {
-        guard HKHealthStore.isHealthDataAvailable() else { return }
-        let waterType = HKQuantityType(.dietaryWater)
-        let quantity = HKQuantity(unit: .literUnit(with: .milli), doubleValue: ml)
-        let sample = HKQuantitySample(type: waterType, quantity: quantity, start: Date(), end: Date())
-        healthStore.save(sample) { _, _ in }
-    }
-
-    private func registerNotificationCategory() {
-        let action = UNNotificationAction(identifier: Self.addWaterAction, title: "Registrar", options: [])
-        let category = UNNotificationCategory(identifier: Self.reminderCategory,
-                                              actions: [action],
-                                              intentIdentifiers: [],
-                                              options: [])
-        UNUserNotificationCenter.current().setNotificationCategories([category])
-    }
+    // As propriedades são @Published, então tudo que lê ou muda elas roda na main thread.
 
     private func requestAndScheduleNotifications() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, _ in
-            DispatchQueue.main.async {
-                if granted { self.scheduleNotifications() }
-                else { self.notificationsEnabled = false }
+        Task { @MainActor in
+            if await reminders.requestAuthorization() {
+                await scheduleReminders()
+            } else {
+                notificationsEnabled = false
             }
         }
     }
 
     private func rescheduleIfNeeded() {
-        if notificationsEnabled { scheduleNotifications() }
+        guard notificationsEnabled else { return }
+        Task { @MainActor in await scheduleReminders() }
     }
 
-    private func scheduleNotifications() {
-        UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
-        let end = max(reminderEndHour, reminderStartHour)
-        for hour in stride(from: reminderStartHour, through: end, by: reminderIntervalHours) {
-            let content = UNMutableNotificationContent()
-            content.title = "Hora de beber água"
-            content.body = "Registre seu copo agora."
-            content.categoryIdentifier = Self.reminderCategory
-            var components = DateComponents()
-            components.hour = hour
-            components.minute = 0
-            let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: true)
-            let req = UNNotificationRequest(identifier: "water_\(hour)", content: content, trigger: trigger)
-            UNUserNotificationCenter.current().add(req)
-        }
-    }
-
-    private func cancelNotifications() {
-        UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
-    }
-
-    private func save() {
-        UserDefaults.standard.set(totalMl, forKey: "water_ml")
+    @MainActor
+    private func scheduleReminders() async {
+        let (start, end, interval) = (reminderStartHour, reminderEndHour, reminderIntervalHours)
+        await reminders.schedule(startHour: start, endHour: end, intervalHours: interval)
     }
 }
 
@@ -225,7 +149,7 @@ final class NotificationHandler: NSObject, UNUserNotificationCenterDelegate {
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                 didReceive response: UNNotificationResponse,
                                 withCompletionHandler completionHandler: @escaping () -> Void) {
-        if response.actionIdentifier == WaterStore.addWaterAction {
+        if response.actionIdentifier == ReminderScheduler.addWaterAction {
             DispatchQueue.main.async {
                 let store = WaterStore.shared
                 store.add(ml: store.lastAmountMl)
