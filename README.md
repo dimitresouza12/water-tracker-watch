@@ -7,13 +7,13 @@ A ideia é registrar a água sem tirar o celular do bolso: um toque no pulso e p
 ## Telas
 
 <p>
-  <img src="screenshots/01-principal.png" width="180" alt="Tela principal">
-  <img src="screenshots/05-meta-batida.png" width="180" alt="Meta batida">
-  <img src="screenshots/02-quantidade.png" width="180" alt="Escolha da quantidade">
+  <img src="screenshots/01-principal.png" width="200" alt="Tela principal">
+  <img src="screenshots/05-meta-batida.png" width="200" alt="Meta batida">
+  <img src="screenshots/02-quantidade.png" width="200" alt="Escolha da quantidade">
 </p>
 <p>
-  <img src="screenshots/03-historico.png" width="180" alt="Histórico dos últimos 7 dias">
-  <img src="screenshots/04-ajustes.png" width="180" alt="Ajustes">
+  <img src="screenshots/03-historico.png" width="200" alt="Histórico dos últimos 7 dias">
+  <img src="screenshots/04-ajustes.png" width="200" alt="Ajustes">
 </p>
 
 Os prints são do simulador. Os dias anteriores do histórico são dados de teste que coloquei pra mostrar o gráfico.
