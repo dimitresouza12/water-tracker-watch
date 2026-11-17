@@ -1,5 +1,7 @@
 # Water Tracker
 
+[![CI](https://github.com/dimitresouza12/water-tracker-watch/actions/workflows/ci.yml/badge.svg)](https://github.com/dimitresouza12/water-tracker-watch/actions/workflows/ci.yml)
+
 App de hidratação para Apple Watch, feito em Swift e SwiftUI. Comecei como projeto de estudo pra aprender o ecossistema da Apple e ainda estou mexendo nele, então tem coisa que falta (veja no fim).
 
 A ideia é registrar a água sem tirar o celular do bolso: um toque no pulso e pronto.
@@ -37,23 +39,41 @@ Os prints são do simulador. Os dias anteriores do histórico são dados de test
 - Swift Charts
 - UserNotifications
 - WatchKit (haptics)
+- `async/await` nas chamadas ao HealthKit e às notificações
 - UserDefaults pra persistência
+- XCTest e GitHub Actions
 
 ## Como está organizado
 
 ```
 WaterTracker Watch App/
-  WaterTrackerApp.swift   ponto de entrada e delegate das notificações
-  WaterStore.swift        estado, persistência, histórico, HealthKit e lembretes
-  ContentView.swift       tela principal e navegação entre as 3 páginas
-  BodyView.swift          corpo que enche e a onda
-  AmountPicker.swift      escolha da quantidade
-  HistoryView.swift       gráfico e sequência
-  SettingsView.swift      meta, peso e lembretes
-  Theme.swift             cores e estilos compartilhados
+  WaterTrackerApp.swift     ponto de entrada e delegate das notificações
+  WaterStore.swift          estado do app e persistência (UserDefaults)
+  HydrationLogic.swift      regras sem UI: meta sugerida, histórico, sequência e média
+  HealthKitService.swift    leitura e escrita de água no app Saúde
+  ReminderScheduler.swift   agendamento dos lembretes
+  ContentView.swift         tela principal e navegação entre as 3 páginas
+  BodyView.swift            corpo que enche e a onda
+  AmountPicker.swift        escolha da quantidade
+  HistoryView.swift         gráfico e sequência
+  SettingsView.swift        meta, peso e lembretes
+  Theme.swift               cores e estilos compartilhados
+Tests/HydrationCoreTests/   testes das regras
 ```
 
-O estado fica todo num `ObservableObject` (`WaterStore`) injetado como `environmentObject`, e as views só leem e chamam métodos dele.
+O `WaterStore` guarda o estado num `ObservableObject` injetado como `environmentObject`, e as views só leem e chamam métodos dele. As contas ficam em `Hydration` (um `enum` sem dependência de SwiftUI), e o que fala com o sistema fica em dois serviços pequenos, um pro Saúde e outro pros lembretes. Começou tudo dentro do `WaterStore`, e eu separei depois pra conseguir testar.
+
+## Testes
+
+As regras de `HydrationLogic.swift` têm testes e rodam sem simulador:
+
+```bash
+swift test
+```
+
+São 13 testes: meta sugerida (com mínimo e máximo), progresso, chave do dia, ordem dos últimos 7 dias, sequência de dias e média. O `Package.swift` aponta pro mesmo arquivo que o app compila, então não tem código duplicado. As telas, o HealthKit e as notificações ainda não têm teste.
+
+O GitHub Actions roda os testes e compila o app do relógio a cada push.
 
 ## Como rodar
 
@@ -69,9 +89,11 @@ Pra testar o HealthKit num aparelho de verdade, precisa trocar o bundle identifi
 ## O que ainda falta
 
 - Complicação no mostrador (a primeira versão tinha, ainda não trouxe pra essa)
-- Testes automatizados
 - Ícone do app
+- Testes das telas e do HealthKit
 - Publicar na App Store
+
+A lista com mais detalhe está nas [Issues](https://github.com/dimitresouza12/water-tracker-watch/issues).
 
 ## Autor
 
