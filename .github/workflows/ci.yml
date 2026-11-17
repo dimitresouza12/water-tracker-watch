@@ -9,14 +9,14 @@ jobs:
   testes:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Testes da lógica
         run: swift test
 
   build:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Compilar o app do relógio
         run: >
           xcodebuild
