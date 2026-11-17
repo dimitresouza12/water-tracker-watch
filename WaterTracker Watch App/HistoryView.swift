@@ -31,6 +31,7 @@ struct HistoryView: View {
                 }
             }
             .padding(.horizontal, 8)
+            .padding(.bottom, 20)
         }
         .appBackground()
     }
@@ -81,7 +82,7 @@ struct HistoryView: View {
                     }
                 }
             }
-            .frame(height: 84)
+            .frame(height: 68)
 
             HStack(spacing: 4) {
                 Text("- - -")
